@@ -4,47 +4,65 @@ import re
 import requests
 from datetime import datetime
 
-# --- 1. 高级 UI 配置与全能 CSS ---
+# --- 1. 高级 UI 配置与自动色彩适配 ---
 st.set_page_config(page_title="Music 30 Days", layout="wide", page_icon="🎧")
 
-# 自定义 CSS 提升设计感 (黑色极简风)
+# 自动适配深浅色模式的 CSS
+# 使用 rgba 和半透明度，确保在深浅背景下都有良好的层次感
 st.markdown("""
     <style>
-    /* 全局样式 */
-    .stApp { max-width: 1000px; margin: 0 auto; background-color: #0e1117; }
+    /* 全局容器限制 */
+    .stApp { max-width: 900px; margin: 0 auto; }
     
-    /* 登录界面微调 */
-    .login-container { display: flex; justify-content: center; align-items: center; height: 70vh; }
-    
-    /* 朋友圈动态卡片 */
+    /* 动态音乐卡片：背景色使用半透明，边框使用动态颜色 */
     .music-card {
-        background-color: #161b22;
-        border-radius: 15px;
-        padding: 2rem;
-        margin-bottom: 2rem;
-        border: 1px solid #30363d;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-        transition: transform 0.2s, border-color 0.2s;
+        background-color: rgba(128, 128, 128, 0.08);
+        border-radius: 16px;
+        padding: 20px;
+        margin-bottom: 25px;
+        border: 1px solid rgba(128, 128, 128, 0.2);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
     }
-    .music-card:hover { transform: translateY(-3px); border-color: #58a6ff; }
     
-    /* 管理员卡片高亮 (金边) */
-    .admin-card { border-color: #f1c40f !important; border-width: 2px !important; box-shadow: 0 4px 15px rgba(241,196,15,0.3) !important; }
+    /* 悬停效果：根据系统主色调产生呼吸感 */
+    .music-card:hover {
+        transform: translateY(-4px);
+        border-color: #58a6ff;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    }
     
-    /* 卡片内部元素 */
-    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-    .user-name { color: #58a6ff; font-weight: 700; font-size: 1.2rem; }
-    .day-badge { background-color: #238636; color: white; padding: 3px 12px; border-radius: 12px; font-size: 0.8rem; }
-    .topic-line { color: #8b949e; font-size: 0.95rem; margin-bottom: 20px; font-style: italic; }
-    .comment-area { margin-top: 15px; color: #d1d5da; font-size: 1rem; border-left: 3px solid #30363d; padding-left: 10px; }
+    /* 管理员卡片：特殊的金色渐变边框 */
+    .admin-card {
+        border: 2px solid #f1c40f !important;
+        background: linear-gradient(145deg, rgba(241,196,15,0.05), rgba(128,128,128,0.08));
+    }
     
-    /* 交互动效 */
-    .stButton>button:hover { transform: scale(1.03); transition: 0.2s; }
+    /* 文字颜色适配 */
+    .user-name { font-weight: 800; font-size: 1.15rem; color: #58a6ff; }
+    .day-badge { 
+        background: #238636; 
+        color: white; 
+        padding: 2px 10px; 
+        border-radius: 20px; 
+        font-size: 0.75rem; 
+        float: right;
+    }
+    .topic-text { 
+        margin: 10px 0; 
+        font-size: 0.95rem; 
+        opacity: 0.8;
+        font-weight: 500;
+    }
+    
+    /* 响应式调整 */
+    @media (max-width: 640px) {
+        .music-card { padding: 15px; }
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. 挑战主题与管理员权限 ---
-# 30天挑战列表
+# --- 2. 核心数据与权限 (修正变量名错误) ---
 CHALLENGES = [
     "歌名里带有颜色的歌", "歌名里带有数字的歌", "让你想起夏天的歌", "让你想起宁愿忘记的人的歌", 
     "需要调大音量放的歌", "让你想尽情跳舞的歌", "适合开车时听的歌", "关于药物或酒精的歌", 
@@ -56,134 +74,107 @@ CHALLENGES = [
     "一首在你童年记忆里的歌", "一首让你想起自己的歌"
 ]
 
-# 从 Secrets 安全读取管理员名称
-ADMIN_USER_NAME = st.secrets.get("ADMIN_USER", "")
+# 从 Secrets 安全读取管理员名称 (统一变量名为 ADMIN_NAME)
+ADMIN_NAME = st.secrets.get("ADMIN_USER", "")
 
-# --- 3. 核心连接与解析逻辑 ---
-# 建立 Supabase 连接
+# --- 3. 核心连接与解析 (保持网易云/AM兼容) ---
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# 解析播放器 (Apple Music & 网易云短链接还原)
-def get_player_html(url):
+def get_player_url(url):
     if not url or str(url) == "nan": return None
     url = str(url).strip()
     
-    # 1. 处理网易云短链接 (163cn.tv)
+    # 还原短链接
     if "163cn.tv" in url:
         try:
             res = requests.get(url, allow_redirects=True, timeout=5)
             url = res.url
         except: pass
 
-    # 2. Apple Music
+    # 解析返回纯链接供 st.iframe 使用
     if "music.apple.com" in url:
-        clean_url = url.split('?')[0]
-        embed_url = clean_url.replace("music.apple.com", "embed.music.apple.com")
-        return f'<iframe allow="autoplay *; encrypted-media *; fullscreen *; clipboard-write" frameborder="0" height="175" style="width:100%;max-width:660px;overflow:hidden;background:transparent;border-radius:12px;" sandbox="allow-forms allow-popups allow-others allow-same-origin allow-scripts allow-storage-access-by-user-activation allow-top-navigation-by-user-activation" src="{embed_url}"></iframe>'
+        return url.split('?')[0].replace("music.apple.com", "embed.music.apple.com")
     
-    # 3. 网易云音乐
     if "163.com" in url:
         sid = re.search(r'id=(\d+)', url)
         if sid:
-            # 提高网易云高度 (解决控件遮挡)
-            return f'<iframe frameborder="no" border="0" marginwidth="0" marginheight="0" width=330 height=110 src="//music.163.com/outchain/player?type=2&id={sid.group(1)}&auto=0&height=90"></iframe>'
+            return f"https://music.163.com/outchain/player?type=2&id={sid.group(1)}&auto=0&height=90"
     return None
 
 # --- 4. 侧边栏 ---
 with st.sidebar:
-    st.title("🎧 控制中心")
+    st.title("🛡️ 权限中心")
     if 'user' in st.session_state:
-        st.success(f"你好, **{st.session_state.user}**")
-        if st.session_state.user == ADMIN_USER_NAME:
-            st.warning("⚠️ 已开启管理员全权删除模式")
-        if st.button("注销登录"):
+        st.write(f"当前用户: **{st.session_state.user}**")
+        if st.session_state.user == ADMIN_NAME:
+            st.warning("已激活管理员全屏删除模式")
+        if st.button("退出登录"):
             del st.session_state.user
             st.rerun()
-    else:
-        st.caption("请输入昵称参与挑战")
 
-# --- 5. 主登录界面 ---
+# --- 5. 主逻辑界面 ---
 if 'user' not in st.session_state:
-    st.markdown('<div class="login-container">', unsafe_allow_html=True)
-    with st.container():
-        st.title("🎵 30天推歌挑战 · 云端空间")
-        u = st.text_input("给自己的推歌之旅起个昵称:", placeholder="易特版纳")
-        if st.button("开启同步挑战"):
-            if u:
-                st.session_state.user = u.strip()
-                st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.title("🎵 30天推歌挑战 · 空间")
+    u = st.text_input("给自己起个昵称:", placeholder="例如：易特版纳")
+    if st.button("进入系统") and u.strip():
+        st.session_state.user = u.strip()
+        st.rerun()
 else:
-    # --- 6. 朋友圈界面 (重中之重：UI优化) ---
-    st.title("🌌 朋友圈音乐时光")
-    tab1, tab2 = st.tabs(["✨ 今日打卡 / 补签", "👀 查看朋友动态"])
+    tab1, tab2 = st.tabs(["✨ 新增发布", "🌌 朋友圈动态"])
 
-    # 打卡选项卡
     with tab1:
-        selected_day = st.slider("选择挑战天数", 1, 30, 1)
-        st.markdown(f"#### **Day {selected_day} 主题**")
-        st.info(CHALLENGES[selected_day-1])
-        
-        with st.form("music_form", clear_on_submit=True):
-            m_url = st.text_input("歌曲链接", placeholder="Apple Music 或 网易云音乐分享链接")
-            m_comment = st.text_area("感想 (写点共鸣吧...)", height=100)
-            submit = st.form_submit_button("同步到云端")
-            
-            if submit and m_url:
-                try:
+        selected_day = st.slider("选择天数", 1, 30, 1)
+        st.markdown(f"#### Day {selected_day}: {CHALLENGES[selected_day-1]}")
+        with st.form("post_form", clear_on_submit=True):
+            m_url = st.text_input("歌曲链接 (AM/网易云)")
+            m_note = st.text_area("感想...")
+            if st.form_submit_button("发送同步"):
+                if m_url:
                     conn.table("music_challenge").upsert({
-                        "day": int(selected_day),
-                        "url": m_url,
-                        "comment": m_comment,
+                        "day": int(selected_day), 
+                        "url": m_url, 
+                        "comment": m_note, 
                         "user_name": st.session_state.user
                     }).execute()
-                    st.toast("云端同步成功!", icon="🚀")
+                    st.toast("发布成功!")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"同步失败: {e}")
 
-    # 动态选项卡：视觉卡片重造
     with tab2:
         res = conn.table("music_challenge").select("*").order("created_at", desc=True).execute()
         
-        if not res.data:
-            st.info("目前还没有动态哦。")
-        else:
-            for row in res.data:
-                # 判断是否应用管理员高亮样式
-                is_admin = row['user_name'] == ADMIN_USER_NAME
-                card_class = "music-card admin-card" if is_admin else "music-card"
-                
-                # --- 渲染卡片布局 (CSS + HTML) ---
-                st.markdown(f"""
-                <div class="{card_class}">
-                    <div class="card-header">
-                        <span class="user-name">👤 {row['user_name']}</span>
-                        <span class="day-badge">Day {row['day']}</span>
-                    </div>
-                    <div class="topic-line">主题：{CHALLENGES[int(row['day'])-1]}</div>
+        for row in res.data:
+            # 判断是否为管理员或本人，显示金色边框
+            is_admin_post = (row['user_name'] == ADMIN_NAME)
+            card_style = "admin-card" if is_admin_post else ""
+            
+            # --- 结构化卡片渲染 ---
+            st.markdown(f"""
+            <div class="music-card {card_style}">
+                <div class="user-name">
+                    👤 {row['user_name']}
+                    <span class="day-badge">Day {row['day']}</span>
                 </div>
-                """, unsafe_allow_html=True)
+                <div class="topic-text">主题：{CHALLENGES[int(row['day'])-1]}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # 播放器与操作
+            col_main, col_del = st.columns([5, 1])
+            with col_main:
+                player_url = get_player_url(row['url'])
+                if player_url:
+                    st.iframe(src=player_url, height=180 if "apple" in player_url else 120)
+                else:
+                    st.link_button("🚀 直接听歌", row['url'])
                 
-                # 卡片内部的具体内容 (播放器、评论、删除)
-                with st.container():
-                    c1, c2 = st.columns([4, 1])
-                    with c1:
-                        player_html = get_player_html(row['url'])
-                        if player_html:
-                            # 渲染播放器
-                            st.components.v1.html(player_html, height=180 if "apple" in row['url'] else 120)
-                        else:
-                            st.link_button("🔗 跳转听歌", row['url'])
-                        
-                        if row['comment']:
-                            st.chat_message("assistant").write(row['comment'])
-                        st.caption(f"🕒 发布时间: {row['created_at'][:16].replace('T', ' ')}")
-                    
-                    with c2:
-                        # 全球删除权限：管理员账号登录后，可删除任何人的动态
-                        if st.session_state.user == ADMIN_USER_NAME or row['user_name'] == st.session_state.user:
-                            if st.button("🗑️", key=f"del_{row['id']}", help="删除此记录"):
-                                conn.table("music_challenge").delete().eq("id", row['id']).execute()
-                                st.rerun()
-                st.divider()
+                if row['comment']:
+                    st.chat_message("user").write(row['comment'])
+                st.caption(f"🕒 {row['created_at'][:16].replace('T', ' ')}")
+
+            with col_del:
+                # 管理员或发布者本人拥有删除按钮
+                if st.session_state.user == ADMIN_NAME or row['user_name'] == st.session_state.user:
+                    if st.button("🗑️", key=f"del_{row['id']}", help="删除此项"):
+                        conn.table("music_challenge").delete().eq("id", row['id']).execute()
+                        st.rerun()
+            st.divider()
