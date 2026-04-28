@@ -36,7 +36,8 @@ DEFAULT_CHALLENGES = [
     "一首在你童年记忆里的歌", "一首让你想起自己的歌"
 ]
 
-
+# 管理员设置（建议在 Secrets 中设置，这里默认为 '易特版纳'）
+ADMIN_NAME = "易特版纳"
 
 # --- 3. 解析逻辑 ---
 def get_player_html(url):
@@ -88,7 +89,7 @@ with st.sidebar:
 # --- 5. 主界面逻辑 ---
 if 'user' not in st.session_state:
     st.title("🎧 30天推歌挑战")
-    u = st.text_input("请输入昵称开始:", placeholder="username")
+    u = st.text_input("请输入昵称开始:", placeholder="易特版纳")
     if st.button("进入应用"):
         if u:
             st.session_state.user = u.strip()
