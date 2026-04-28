@@ -1,6 +1,7 @@
 import streamlit as st
 from st_supabase_connection import SupabaseConnection
 import re
+import requests
 from datetime import datetime
 
 # --- 页面配置 ---
@@ -21,34 +22,38 @@ CHALLENGES = [
 ]
 
 # --- 建立 Supabase 连接 ---
-# 请确保你的 .streamlit/secrets.toml 中有 SUPABASE_URL 和 SUPABASE_KEY
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# --- 播放器解析逻辑 ---
+# --- 解析函数 ---
 def get_player_html(url):
     if not url or str(url) == "nan": return None
-    # Apple Music
-    if "apple.com" in url:
-        embed_url = url.replace("music.apple.com", "embed.music.apple.com")
+    url = str(url).strip()
+    
+    if "163cn.tv" in url:
+        try:
+            res = requests.get(url, allow_redirects=True, timeout=5)
+            url = res.url
+        except: pass
+
+    if "music.apple.com" in url:
+        clean_url = url.split('?')[0]
+        embed_url = clean_url.replace("music.apple.com", "embed.music.apple.com")
         return f'<iframe allow="autoplay *; encrypted-media *; fullscreen *; clipboard-write" frameborder="0" height="175" style="width:100%;max-width:660px;overflow:hidden;background:transparent;border-radius:10px;" src="{embed_url}"></iframe>'
-    # 网易云音乐
+    
     if "163.com" in url:
         sid = re.search(r'id=(\d+)', url)
         if sid:
             return f'<iframe frameborder="no" border="0" marginwidth="0" marginheight="0" width=330 height=86 src="//music.163.com/outchain/player?type=2&id={sid.group(1)}&auto=0&height=66"></iframe>'
     return None
 
-# --- 用户登录系统 ---
+# --- 用户系统 ---
 if 'user' not in st.session_state:
     st.title("🎵 30天推歌挑战")
-    st.info("数据将实时同步至云端，与朋友共同完成挑战")
-    u = st.text_input("请输入你的昵称 (用于标识你的打卡)", placeholder="例如: Yite")
-    if st.button("开始同步之旅"):
+    u = st.text_input("请输入你的昵称", placeholder="例如: 易特版纳")
+    if st.button("开始挑战"):
         if u.strip():
             st.session_state.user = u.strip()
             st.rerun()
-        else:
-            st.warning("请输入昵称后再继续")
 else:
     user = st.session_state.user
     st.sidebar.title(f"👤 {user}")
@@ -56,69 +61,69 @@ else:
         del st.session_state.user
         st.rerun()
 
-    tab1, tab2 = st.tabs(["✍️ 今日打卡 / 补签", "🌍 朋友圈动态"])
+    tab1, tab2 = st.tabs(["✍️ 打卡 / 补签", "🌍 朋友圈动态"])
 
-    # --- 选项卡 1: 打卡功能 ---
+    # --- TAB 1: 打卡 ---
     with tab1:
-        st.subheader("记录你的音乐心情")
-        # 补签逻辑：自由选择天数
-        selected_day = st.number_input("选择挑战天数 (Day 1 - 30)", 1, 30, 1)
-        st.markdown(f"### **Day {selected_day} 主题**")
-        st.success(CHALLENGES[selected_day-1])
+        st.subheader("记录今日推歌")
+        selected_day = st.number_input("选择挑战天数", 1, 30, 1)
+        st.info(f"Day {selected_day}: {CHALLENGES[selected_day-1]}")
         
-        with st.form("music_form", clear_on_submit=False):
-            m_url = st.text_input("歌曲链接", placeholder="粘贴 Apple Music 或 网易云音乐链接")
-            m_comment = st.text_area("为什么推荐这首歌？", placeholder="写点什么吧...", height=100)
+        with st.form("music_form", clear_on_submit=True):
+            m_url = st.text_input("歌曲链接", placeholder="Apple Music / 网易云")
+            m_comment = st.text_area("此刻的想法...")
             submit = st.form_submit_button("同步到云端")
             
-            if submit:
-                if m_url:
-                    try:
-                        # 插入或更新数据
-                        # 注意：我们在 SQL 里没设联合唯一约束，这里简单演示插入
-                        conn.table("music_challenge").upsert({
-                            "day": int(selected_day),
-                            "url": m_url,
-                            "comment": m_comment,
-                            "user_name": user
-                        }).execute()
-                        st.balloons()
-                        st.success(f"Day {selected_day} 同步成功！")
-                    except Exception as e:
-                        st.error(f"同步失败: {e}")
-                else:
-                    st.error("请至少提供一个歌曲链接")
+            if submit and m_url:
+                try:
+                    conn.table("music_challenge").upsert({
+                        "day": int(selected_day),
+                        "url": m_url,
+                        "comment": m_comment,
+                        "user_name": user
+                    }).execute()
+                    st.success(f"Day {selected_day} 已成功同步！")
+                    st.cache_data.clear() # 清除缓存
+                except Exception as e:
+                    st.error(f"同步失败: {e}")
 
-    # --- 选项卡 2: 朋友圈展示 ---
+    # --- TAB 2: 朋友圈 & 删除功能 ---
     with tab2:
         st.subheader("大家最近在听...")
         try:
-            # 从 Supabase 读取所有数据，按创建时间倒序排
             response = conn.table("music_challenge").select("*").order("created_at", desc=True).execute()
             rows = response.data
             
             if not rows:
-                st.info("目前还没有动态，快去发布第一首歌吧！")
+                st.info("目前还没有动态。")
             else:
                 for row in rows:
                     with st.container():
                         c1, c2 = st.columns([1, 4])
                         with c1:
-                            # 修复之前显示 nan 的问题
-                            display_name = str(row['user_name']) if row['user_name'] else "匿名好友"
-                            st.markdown(f"#### {display_name}")
+                            st.markdown(f"#### {row['user_name']}")
                             st.markdown(f"`Day {row['day']}`")
+                            
+                            # --- 删除功能逻辑 ---
+                            # 只有发布者本人可以看到并执行删除
+                            if row['user_name'] == user:
+                                if st.button("🗑️ 删除", key=f"del_{row['id']}"):
+                                    conn.table("music_challenge").delete().eq("id", row['id']).execute()
+                                    st.toast("记录已删除！")
+                                    st.rerun() # 重新刷新页面以更新列表
+                                    
                         with c2:
                             st.caption(f"主题: {CHALLENGES[int(row['day'])-1]}")
-                            player = get_player_html(row['url'])
-                            if player:
-                                st.components.v1.html(player, height=180 if "apple" in row['url'] else 100)
+                            player_html = get_player_html(row['url'])
+                            
+                            if player_html:
+                                st.components.v1.html(player_html, height=180 if "apple" in str(row['url']) else 100)
                             else:
-                                st.warning("链接解析失败")
-                                st.link_button("跳转链接", row['url'])
+                                st.link_button("🚀 直接跳转听歌", row['url'])
                             
                             if row['comment']:
-                                st.chat_message("assistant").write(row['comment'])
+                                st.info(row['comment'])
+                            st.caption(f"🕒 发布时间: {row['created_at'][:16].replace('T', ' ')}")
                         st.divider()
         except Exception as e:
-            st.error(f"读取数据失败: {e}")
+            st.error(f"数据获取失败: {e}")
