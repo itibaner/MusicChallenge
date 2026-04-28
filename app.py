@@ -115,7 +115,7 @@ with st.sidebar:
 # --- 5. 主逻辑界面 ---
 if 'user' not in st.session_state:
     st.title("🎵 30天推歌挑战 · 空间")
-    u = st.text_input("给自己起个昵称:", placeholder="例如：易特版纳")
+    u = st.text_input("给自己起个昵称:", placeholder="例如：用户名")
     if st.button("进入系统") and u.strip():
         st.session_state.user = u.strip()
         st.rerun()
